@@ -1,0 +1,57 @@
+name: Check source for changes
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check_source_for_changes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check for changes
+        id: check
+        run: |
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "new_files<<$EOF" >> "$GITHUB_OUTPUT"
+          python3 ./.scripts/sync_original.py >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+      - name: Report
+        run: |
+          echo "New files:"
+          echo "${{ steps.check.outputs.new_files }}"
+      - name: Check if branch already exists
+        if: steps.check.outputs.new_files != '' && !inputs.dry_run
+        run: |
+          git fetch
+          if git branch -r | grep -q "origin/sync-with-original"; then
+          echo
+            echo "branch_exists=1" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+      - name: Open PR
+        if: steps.check.outputs.new_files != '' && steps.branch_exists.outputs != '1' && !inputs.dry_run
+        uses: peter-evans/create-pull-request@v4
+        with:
+          title: Sync with original
+          body: |
+            Sync with [original](https://github.com/encode/django-rest-framework/tree/master/docs)
+            ${{ steps.check.outputs.new_files }}
+          labels: sync
+          branch: sync-with-original
+          branch-suffix: random
+          commit-message: Sync with original
+          delete-branch: true
+          assignees: ${{ github.repository_owner }}
+          draft: true
